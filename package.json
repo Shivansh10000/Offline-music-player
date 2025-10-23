@@ -11,7 +11,8 @@
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "idb": "^8.0.3"
+    "idb": "^8.0.3",
+    "webworker": "^0.8.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

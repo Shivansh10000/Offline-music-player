@@ -61,8 +61,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = React.memo(({ onPlayPause,
             <div className="md:hidden">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3 min-w-0">
-                        <div className="w-12 h-12 bg-gray-700 rounded-md flex-shrink-0">
-                            {currentSong && <img src={`https://picsum.photos/seed/${currentSong.id}/64`} alt="album art" className="w-full h-full object-cover rounded-md" />}
+                        <div className="w-12 h-12 bg-gray-700 rounded-md flex items-center justify-center flex-shrink-0">
+                            <MusicIcon />
                         </div>
                         <div className="flex-grow min-w-0">
                             <p className="font-bold truncate">{currentSong?.title || 'No song selected'}</p>
@@ -92,8 +92,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = React.memo(({ onPlayPause,
             </div>
             {/* --- Desktop View --- */}
             <div className="hidden md:flex items-center space-x-4">
-                <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0">
-                    {currentSong && <img src={`https://picsum.photos/seed/${currentSong.id}/64`} alt="album art" className="w-full h-full object-cover rounded-md" />}
+                <div className="w-16 h-16 bg-gray-700 rounded-md flex items-center justify-center flex-shrink-0">
+                    <MusicIcon />
                 </div>
                 <div className="flex-grow min-w-0">
                     <p className="font-bold truncate">{currentSong?.title || 'No song selected'}</p>
