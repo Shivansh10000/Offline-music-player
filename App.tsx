@@ -1,324 +1,52 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { Song, Playlist, SortOption, ShuffleMode, RepeatMode } from './types';
-import { getSongs, addSongs, getPlaylists, addPlaylist, updatePlaylist, deletePlaylist, incrementPlayCount } from './services/db';
-import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, MusicIcon, PlaylistIcon, FolderIcon, SearchIcon, PlusIcon, MoreIcon, XIcon, SpinnerIcon, MenuIcon } from './components/Icons';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { addSongs, getSongs, incrementPlayCount } from './services/db';
+import { Song, ShuffleMode, RepeatMode } from './types';
+import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, FolderIcon, SpinnerIcon } from './components/Icons';
 
-// Fix: Add `webkitdirectory` to React's type definitions for input elements
-// to allow selecting directories. This is a non-standard property.
-declare module 'react' {
-    interface InputHTMLAttributes<T> {
-        webkitdirectory?: string;
-    }
-}
+// This is loaded from a CDN, so we declare it globally.
+declare const jsmediatags: any;
 
-const SUPPORTED_FORMATS = ['mp3', 'm4a', 'wav', 'flac', 'aac'];
-const PLAY_COUNT_THRESHOLD_S = 5;
-
-// --- Helper Functions ---
-const formatDuration = (seconds: number): string => {
-    if (isNaN(seconds)) return '0:00';
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+// Helper function to format time
+const formatTime = (seconds: number): string => {
+    if (isNaN(seconds) || seconds === 0) return '0:00';
+    const flooredSeconds = Math.floor(seconds);
+    const min = Math.floor(flooredSeconds / 60);
+    const sec = flooredSeconds % 60;
+    return `${min}:${sec < 10 ? '0' : ''}${sec}`;
 };
 
-// --- Child Components (defined outside App to prevent re-creation on re-render) ---
-
-interface PlayerControlsProps {
-    onPlayPause: () => void;
-    onNext: () => void;
-    onPrev: () => void;
-    onSeek: (time: number) => void;
-    onToggleShuffle: () => void;
-    onToggleRepeat: () => void;
-    isPlaying: boolean;
-    duration: number;
-    currentTime: number;
-    currentSong: Song | null;
-    shuffleMode: ShuffleMode;
-    repeatMode: RepeatMode;
-}
-
-const PlayerControls: React.FC<PlayerControlsProps> = React.memo(({ onPlayPause, onNext, onPrev, onSeek, onToggleShuffle, onToggleRepeat, isPlaying, duration, currentTime, currentSong, shuffleMode, repeatMode }) => {
-    const seekBarRefDesktop = useRef<HTMLInputElement>(null);
-    const seekBarRefMobile = useRef<HTMLInputElement>(null);
-
-    const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-        onSeek(Number(e.target.value));
-    };
-
-    useEffect(() => {
-        const progress = (currentTime / duration) * 100 || 0;
-        const style = `linear-gradient(to right, #1DB954 ${progress}%, #4b5563 ${progress}%)`;
-        if(seekBarRefDesktop.current) seekBarRefDesktop.current.style.background = style;
-        if(seekBarRefMobile.current) seekBarRefMobile.current.style.background = style;
-
-    }, [currentTime, duration]);
-
-    return (
-        <div className="fixed bottom-0 left-0 right-0 bg-gray-800/80 backdrop-blur-md text-white p-3 shadow-lg">
-             {/* --- Mobile View --- */}
-            <div className="md:hidden">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3 min-w-0">
-                        <div className="w-12 h-12 bg-gray-700 rounded-md flex items-center justify-center flex-shrink-0">
-                            <MusicIcon />
-                        </div>
-                        <div className="flex-grow min-w-0">
-                            <p className="font-bold truncate">{currentSong?.title || 'No song selected'}</p>
-                            <p className="text-sm text-gray-400 truncate">{currentSong?.artist || '...'}</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <button onClick={onPlayPause} className="w-12 h-12 flex items-center justify-center rounded-full text-white">
-                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                        </button>
-                        <button onClick={onNext}><NextIcon /></button>
-                    </div>
-                </div>
-                <div className="flex items-center w-full space-x-2 mt-2">
-                    <span className="text-xs">{formatDuration(currentTime)}</span>
-                    <input
-                        ref={seekBarRefMobile}
-                        type="range"
-                        min="0"
-                        max={duration || 100}
-                        value={currentTime}
-                        onChange={handleSeek}
-                        className="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer range-sm"
-                    />
-                    <span className="text-xs">{formatDuration(duration)}</span>
-                </div>
-            </div>
-            {/* --- Desktop View --- */}
-            <div className="hidden md:flex items-center space-x-4">
-                <div className="w-16 h-16 bg-gray-700 rounded-md flex items-center justify-center flex-shrink-0">
-                    <MusicIcon />
-                </div>
-                <div className="flex-grow min-w-0">
-                    <p className="font-bold truncate">{currentSong?.title || 'No song selected'}</p>
-                    <p className="text-sm text-gray-400 truncate">{currentSong?.artist || '...'}</p>
-                </div>
-                <div className="flex flex-col items-center flex-grow-[2] max-w-lg">
-                    <div className="flex items-center space-x-4">
-                        <button onClick={onToggleShuffle} title="Shuffle"><ShuffleIcon isActive={shuffleMode !== 'none'} /></button>
-                        <button onClick={onPrev} title="Previous"><PrevIcon /></button>
-                        <button onClick={onPlayPause} className="w-12 h-12 flex items-center justify-center bg-green-500 rounded-full text-black hover:bg-green-400 transition-colors" title={isPlaying ? 'Pause' : 'Play'}>
-                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                        </button>
-                        <button onClick={onNext} title="Next"><NextIcon /></button>
-                        <button onClick={onToggleRepeat} title="Repeat"><RepeatIcon mode={repeatMode} /></button>
-                    </div>
-                    <div className="flex items-center w-full space-x-2 mt-2">
-                        <span className="text-xs">{formatDuration(currentTime)}</span>
-                        <input
-                            ref={seekBarRefDesktop}
-                            type="range"
-                            min="0"
-                            max={duration || 100}
-                            value={currentTime}
-                            onChange={handleSeek}
-                            className="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer range-sm"
-                        />
-                        <span className="text-xs">{formatDuration(duration)}</span>
-                    </div>
-                </div>
-                 <div className="flex-grow"></div>
-            </div>
-        </div>
-    );
-});
-
-// --- Main App Component ---
-export default function App() {
-    // State
+const App: React.FC = () => {
     const [songs, setSongs] = useState<Song[]>([]);
-    const [playlists, setPlaylists] = useState<Playlist[]>([]);
-    const [activeView, setActiveView] = useState<{ type: 'library' | 'playlist'; id?: number }>({ type: 'library' });
-    const [searchQuery, setSearchQuery] = useState('');
-    const [sortOption, setSortOption] = useState<SortOption>({ key: 'title', direction: 'asc' });
-
-    // Playback State
-    const [currentSongIndex, setCurrentSongIndex] = useState(-1);
-    const [playQueue, setPlayQueue] = useState<Song[]>([]);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [currentTime, setCurrentTime] = useState(0);
-    const [duration, setDuration] = useState(0);
+    const [currentSongIndex, setCurrentSongIndex] = useState<number | null>(null);
+    const [isPlaying, setIsPlaying] = useState<boolean>(false);
+    const [currentTime, setCurrentTime] = useState<number>(0);
+    const [duration, setDuration] = useState<number>(0);
+    const [volume, setVolume] = useState<number>(1);
     const [shuffleMode, setShuffleMode] = useState<ShuffleMode>('none');
     const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
+    const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [playQueue, setPlayQueue] = useState<number[]>([]);
     
-    // UI State
-    const [isLoading, setIsLoading] = useState(true);
-    const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
-    const [isScanning, setIsScanning] = useState(false);
-    const [isAddToPlaylistModalOpen, setAddToPlaylistModalOpen] = useState<Song | null>(null);
-    const [isSidebarOpen, setSidebarOpen] = useState(false);
-
-
-    // Refs
     const audioRef = useRef<HTMLAudioElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const playCountTrackedRef = useRef<Set<string>>(new Set());
 
-    // Data Loading
+    // Load songs from DB on mount
     useEffect(() => {
-        const loadInitialData = async () => {
+        const loadSongs = async () => {
             setIsLoading(true);
-            const [dbSongs, dbPlaylists] = await Promise.all([getSongs(), getPlaylists()]);
+            const dbSongs = await getSongs();
             setSongs(dbSongs);
-            setPlaylists(dbPlaylists);
+            // Initialize play queue
+            setPlayQueue(dbSongs.map((_, index) => index));
             setIsLoading(false);
         };
-        loadInitialData();
+        loadSongs();
     }, []);
-    
-    // Audio Player Logic
-    useEffect(() => {
-      const audio = audioRef.current;
-      if (!audio) return;
-    
-      const updateCurrentTime = () => setCurrentTime(audio.currentTime);
-      const updateDuration = () => setDuration(audio.duration);
-      const handleEnded = () => playNextSong();
-    
-      audio.addEventListener('timeupdate', updateCurrentTime);
-      audio.addEventListener('loadedmetadata', updateDuration);
-      audio.addEventListener('ended', handleEnded);
-    
-      return () => {
-        audio.removeEventListener('timeupdate', updateCurrentTime);
-        audio.removeEventListener('loadedmetadata', updateDuration);
-        audio.removeEventListener('ended', handleEnded);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playQueue, currentSongIndex, repeatMode]);
 
-    useEffect(() => {
-        if (isPlaying) {
-            audioRef.current?.play().catch(e => console.error("Error playing audio:", e));
-        } else {
-            audioRef.current?.pause();
-        }
-    }, [isPlaying]);
+    const currentSong = currentSongIndex !== null ? songs[currentSongIndex] : null;
 
-    useEffect(() => {
-        const currentSong = playQueue[currentSongIndex];
-        if (audioRef.current && currentSong) {
-            audioRef.current.src = URL.createObjectURL(currentSong.file);
-            if (isPlaying) {
-                 audioRef.current.play().catch(e => console.error("Error playing audio:", e));
-            }
-        }
-    }, [currentSongIndex, playQueue, isPlaying]);
-    
-    // Play Count Logic
-    useEffect(() => {
-        const currentSong = playQueue[currentSongIndex];
-        if (!currentSong) return;
-
-        const songPlaybackId = `${currentSong.id}-${Date.now()}`;
-
-        if (isPlaying && currentTime >= PLAY_COUNT_THRESHOLD_S && !playCountTrackedRef.current.has(songPlaybackId)) {
-            playCountTrackedRef.current.add(songPlaybackId);
-            incrementPlayCount(currentSong.id).then(() => {
-                setSongs(prevSongs => prevSongs.map(s => s.id === currentSong.id ? { ...s, playCount: s.playCount + 1 } : s));
-            });
-        }
-
-        if(!isPlaying && currentSongIndex !== -1) {
-             // Reset tracking when paused
-            playCountTrackedRef.current.clear();
-        }
-
-    }, [currentTime, isPlaying, currentSongIndex, playQueue]);
-
-
-    // Functions
-    const handleFolderSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = event.target.files;
-        if (files) {
-            scanFiles(Array.from(files));
-        }
-    };
-    
-    const scanFiles = async (files: File[]) => {
-        setIsScanning(true);
-        setScanProgress({ current: 0, total: files.length });
-
-        const newSongs: Song[] = [];
-        const existingSongIds = new Set(songs.map(s => s.fileName));
-
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            setScanProgress({ current: i + 1, total: files.length });
-
-            const extension = file.name.split('.').pop()?.toLowerCase();
-            if (!extension || !SUPPORTED_FORMATS.includes(extension) || existingSongIds.has(file.name)) {
-                continue;
-            }
-
-            try {
-                const tags = await new Promise((resolve, reject) => {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    (window as any).jsmediatags.read(file, {
-                        onSuccess: resolve,
-                        onError: reject,
-                    });
-                });
-                
-                const audio = document.createElement('audio');
-                audio.src = URL.createObjectURL(file);
-                const duration = await new Promise<number>((resolve) => {
-                    audio.onloadedmetadata = () => resolve(audio.duration);
-                    audio.onerror = () => resolve(0); // fallback
-                });
-                
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const { title, artist, album } = (tags as any).tags;
-
-                const song: Song = {
-                    id: `${file.name}-${file.lastModified}`,
-                    file: file,
-                    fileName: file.name,
-                    title: title || file.name.replace(/\.[^/.]+$/, ""),
-                    artist: artist || 'Unknown Artist',
-                    album: album || 'Unknown Album',
-                    duration: duration,
-                    playCount: 0,
-                    dateAdded: Date.now(),
-                };
-                newSongs.push(song);
-            } catch (error) {
-                console.warn(`Could not read metadata for ${file.name}`, error);
-            }
-        }
-
-        if (newSongs.length > 0) {
-            await addSongs(newSongs);
-            setSongs(prev => [...prev, ...newSongs]);
-        }
-        setIsScanning(false);
-    };
-
-    const playSong = (song: Song, songList: Song[]) => {
-        const index = songList.findIndex(s => s.id === song.id);
-        if (index > -1) {
-            if (shuffleMode !== 'none') {
-                const shuffledQueue = getShuffledQueue(songList);
-                const newIndex = shuffledQueue.findIndex(s => s.id === song.id);
-                setPlayQueue(shuffledQueue);
-                setCurrentSongIndex(newIndex);
-            } else {
-                setPlayQueue(songList);
-                setCurrentSongIndex(index);
-            }
-            setIsPlaying(true);
-        }
-    };
-    
-    const playNextSong = () => {
-        if (playQueue.length === 0) return;
-    
+    const handleNext = useCallback(() => {
+        if (songs.length === 0 || currentSongIndex === null) return;
         if (repeatMode === 'one') {
             if (audioRef.current) {
                 audioRef.current.currentTime = 0;
@@ -326,327 +54,281 @@ export default function App() {
             }
             return;
         }
-    
-        let nextIndex = currentSongIndex + 1;
-        if (nextIndex >= playQueue.length) {
+
+        const currentQueueIndex = playQueue.indexOf(currentSongIndex);
+        let nextQueueIndex = currentQueueIndex + 1;
+
+        if (nextQueueIndex >= playQueue.length) {
             if (repeatMode === 'all') {
-                nextIndex = 0;
+                nextQueueIndex = 0;
             } else {
                 setIsPlaying(false);
                 return;
             }
         }
-        setCurrentSongIndex(nextIndex);
-    };
+        const nextSongIndex = playQueue[nextQueueIndex];
+        setCurrentSongIndex(nextSongIndex);
+        setIsPlaying(true);
+        incrementPlayCount(songs[nextSongIndex].id);
+    }, [songs, currentSongIndex, playQueue, repeatMode]);
+
+    // Audio element effects
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        const updateCurrentTime = () => setCurrentTime(audio.currentTime);
+        const updateDuration = () => setDuration(audio.duration);
+        const handleSongEnd = () => handleNext();
+
+        audio.addEventListener('timeupdate', updateCurrentTime);
+        audio.addEventListener('loadedmetadata', updateDuration);
+        audio.addEventListener('ended', handleSongEnd);
+
+        return () => {
+            audio.removeEventListener('timeupdate', updateCurrentTime);
+            audio.removeEventListener('loadedmetadata', updateDuration);
+            audio.removeEventListener('ended', handleSongEnd);
+        };
+    }, [handleNext]);
     
-    const playPrevSong = () => {
-        if (playQueue.length === 0) return;
-        if(audioRef.current && audioRef.current.currentTime > 3) {
+    // Play/Pause effect
+    useEffect(() => {
+        if (isPlaying) {
+            audioRef.current?.play().catch(e => console.error("Error playing audio:", e));
+        } else {
+            audioRef.current?.pause();
+        }
+    }, [isPlaying]);
+    
+    // Song change effect
+    useEffect(() => {
+        if (audioRef.current && currentSong) {
+            audioRef.current.src = URL.createObjectURL(currentSong.file);
+            document.title = `${currentSong.title} - ${currentSong.artist}`;
+            if (isPlaying) {
+               audioRef.current.play().catch(e => console.error("Error playing audio:", e));
+            }
+        } else {
+            document.title = 'Offline Music Player';
+        }
+    }, [currentSong]);
+
+    const playSong = useCallback((index: number) => {
+        setCurrentSongIndex(index);
+        setIsPlaying(true);
+        incrementPlayCount(songs[index].id);
+    }, [songs]);
+
+    const handlePlayPause = () => {
+        if (currentSongIndex === null && songs.length > 0) {
+            playSong(playQueue[0] ?? 0);
+        } else {
+            setIsPlaying(!isPlaying);
+        }
+    };
+
+    const handlePrev = () => {
+        if (songs.length === 0 || currentSongIndex === null) return;
+        if (audioRef.current && audioRef.current.currentTime > 3) {
             audioRef.current.currentTime = 0;
             return;
         }
-
-        let prevIndex = currentSongIndex - 1;
-        if (prevIndex < 0) {
-            if(repeatMode === 'all') {
-               prevIndex = playQueue.length - 1;
-            } else {
-                return; // Stop at the beginning if not repeating
-            }
+        const currentQueueIndex = playQueue.indexOf(currentSongIndex);
+        const prevQueueIndex = currentQueueIndex - 1;
+        if (prevQueueIndex >= 0) {
+            playSong(playQueue[prevQueueIndex]);
         }
-        setCurrentSongIndex(prevIndex);
     };
     
-    const handlePlayPause = () => {
-        if (playQueue.length > 0) {
-            setIsPlaying(!isPlaying);
-        } else if (songs.length > 0) {
-            playSong(songs[0], songs);
-        }
-    };
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+        setIsLoading(true);
 
-    const handleSeek = (time: number) => {
-        if (audioRef.current) {
-            audioRef.current.currentTime = time;
-            setCurrentTime(time);
-        }
-    };
-
-    const getShuffledQueue = useCallback((sourceQueue: Song[]): Song[] => {
-        const queue = [...sourceQueue];
-        if (shuffleMode === 'random') {
-            for (let i = queue.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [queue[i], queue[j]] = [queue[j], queue[i]];
+        const newSongs: Song[] = [];
+        for (const file of Array.from(files)) {
+            if (file.type.startsWith('audio/')) {
+                try {
+                    const tags: any = await new Promise((resolve, reject) => {
+                        jsmediatags.read(file, { onSuccess: resolve, onError: reject });
+                    });
+                    
+                    const newSong: Song = {
+                        id: `${file.name}-${file.lastModified}`,
+                        file: file,
+                        fileName: file.name,
+                        title: tags.tags.title || file.name.replace(/\.[^/.]+$/, ""),
+                        artist: tags.tags.artist || 'Unknown Artist',
+                        album: tags.tags.album || 'Unknown Album',
+                        duration: 0, // Will be set on metadata load
+                        playCount: 0,
+                        dateAdded: Date.now(),
+                    };
+                    newSongs.push(newSong);
+                } catch (error) {
+                    console.error("Error reading media tags for file:", file.name, error);
+                     const newSong: Song = {
+                        id: `${file.name}-${file.lastModified}`,
+                        file: file,
+                        fileName: file.name,
+                        title: file.name.replace(/\.[^/.]+$/, ""),
+                        artist: 'Unknown Artist',
+                        album: 'Unknown Album',
+                        duration: 0,
+                        playCount: 0,
+                        dateAdded: Date.now(),
+                    };
+                    newSongs.push(newSong);
+                }
             }
-        } else if (shuffleMode === 'weighted') {
-            const totalPlayCount = queue.reduce((sum, song) => sum + song.playCount, 0);
-            queue.sort((a, b) => {
-                const weightA = (totalPlayCount - a.playCount) || 1;
-                const weightB = (totalPlayCount - b.playCount) || 1;
-                return (Math.random() * weightB) - (Math.random() * weightA);
-            });
         }
-        return queue;
-    }, [shuffleMode]);
+
+        if (newSongs.length > 0) {
+            await addSongs(newSongs);
+            const allSongs = await getSongs();
+            setSongs(allSongs);
+            setPlayQueue(allSongs.map((_, index) => index));
+        }
+        setIsLoading(false);
+    };
+    
+    const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (audioRef.current) {
+            audioRef.current.currentTime = Number(e.target.value);
+            setCurrentTime(Number(e.target.value));
+        }
+    };
+
+    const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newVolume = Number(e.target.value);
+        setVolume(newVolume);
+        if (audioRef.current) {
+            audioRef.current.volume = newVolume;
+        }
+    };
 
     const toggleShuffle = () => {
-        const modes: ShuffleMode[] = ['none', 'random', 'weighted'];
-        const nextIndex = (modes.indexOf(shuffleMode) + 1) % modes.length;
-        const newMode = modes[nextIndex];
-        setShuffleMode(newMode);
-
-        if (newMode !== 'none' && playQueue.length > 0) {
-            const currentSong = playQueue[currentSongIndex];
-            const newQueue = getShuffledQueue(playQueue);
-            const newIndex = newQueue.findIndex(s => s.id === currentSong.id);
-            setPlayQueue(newQueue);
-            setCurrentSongIndex(newIndex);
-        } else if (newMode === 'none' && playQueue.length > 0) {
-            // Revert to original order of active view
-            const originalList = activeView.type === 'library'
-              ? songs
-              : playlists.find(p => p.id === activeView.id)?.songIds.map(id => songs.find(s => s.id === id)!) || [];
-            
-            const currentSong = playQueue[currentSongIndex];
-            const newIndex = originalList.findIndex(s => s.id === currentSong.id);
-            setPlayQueue(originalList);
-            setCurrentSongIndex(newIndex);
-        }
+        setShuffleMode(prev => {
+            const newMode = prev === 'none' ? 'random' : 'none';
+            if (newMode === 'random') {
+                const shuffled = [...songs.map((_, i) => i)].sort(() => Math.random() - 0.5);
+                setPlayQueue(shuffled);
+            } else {
+                const originalOrder = songs.map((_, index) => index);
+                setPlayQueue(originalOrder);
+            }
+            return newMode;
+        });
     };
 
     const toggleRepeat = () => {
-        const modes: RepeatMode[] = ['none', 'all', 'one'];
-        const nextIndex = (modes.indexOf(repeatMode) + 1) % modes.length;
-        setRepeatMode(modes[nextIndex]);
-    };
-
-    const handleCreatePlaylist = async () => {
-        const name = prompt("Enter new playlist name:");
-        if (name) {
-            const newId = await addPlaylist(name);
-            const newPlaylist = { id: newId, name, songIds: [], dateCreated: Date.now() };
-            setPlaylists([...playlists, newPlaylist]);
-        }
-    };
-
-    const handleAddSongToPlaylist = async (playlistId: number, songId: string) => {
-        const playlist = playlists.find(p => p.id === playlistId);
-        if (playlist && !playlist.songIds.includes(songId)) {
-            const updatedPlaylist = { ...playlist, songIds: [...playlist.songIds, songId] };
-            await updatePlaylist(updatedPlaylist);
-            setPlaylists(playlists.map(p => p.id === playlistId ? updatedPlaylist : p));
-        }
-        setAddToPlaylistModalOpen(null);
-    };
-    
-    const handleViewChange = (view: { type: 'library' | 'playlist'; id?: number }) => {
-        setActiveView(view);
-        setSidebarOpen(false); // Close sidebar on selection
-    }
-
-    const filteredAndSortedSongs = useMemo(() => {
-        let items = songs;
-        
-        if (activeView.type === 'playlist') {
-            const playlist = playlists.find(p => p.id === activeView.id);
-            if (playlist) {
-                items = playlist.songIds.map(id => songs.find(s => s.id === id)).filter((s): s is Song => !!s);
-            } else {
-                items = [];
-            }
-        }
-        
-        if (searchQuery) {
-            items = items.filter(song =>
-                song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                song.album.toLowerCase().includes(searchQuery.toLowerCase())
-            );
-        }
-
-        return [...items].sort((a, b) => {
-            let compare = 0;
-            if (sortOption.key === 'title' || sortOption.key === 'artist') {
-                compare = a[sortOption.key].localeCompare(b[sortOption.key]);
-            } else {
-                compare = a[sortOption.key] - b[sortOption.key];
-            }
-            return sortOption.direction === 'asc' ? compare : -compare;
+        setRepeatMode(prev => {
+            if (prev === 'none') return 'all';
+            if (prev === 'all') return 'one';
+            return 'none';
         });
-    }, [songs, playlists, activeView, searchQuery, sortOption]);
-    
-    const currentSong = playQueue[currentSongIndex] || null;
+    };
 
-    // UI Render
     return (
-        <div className="flex h-screen bg-black">
-            <audio ref={audioRef} />
-            {isAddToPlaylistModalOpen && (
-                 <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-                    <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm">
-                        <h2 className="text-lg font-bold mb-4">Add to Playlist</h2>
-                        <p className="text-gray-300 mb-4 truncate">Adding: {isAddToPlaylistModalOpen.title}</p>
-                        <div className="max-h-60 overflow-y-auto">
-                            {playlists.map(playlist => (
-                                <button key={playlist.id} onClick={() => handleAddSongToPlaylist(playlist.id, isAddToPlaylistModalOpen.id)} className="block w-full text-left p-3 hover:bg-gray-700 rounded-md transition-colors">
-                                    {playlist.name}
-                                </button>
-                            ))}
-                        </div>
-                         <button onClick={() => setAddToPlaylistModalOpen(null)} className="mt-6 w-full p-2 bg-gray-600 hover:bg-gray-500 rounded-md">
-                            Cancel
-                        </button>
-                    </div>
-                 </div>
-            )}
-            {isScanning && (
-                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
-                    <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm text-center">
-                        <h2 className="text-lg font-bold mb-4">Scanning Library...</h2>
+        <div className="bg-gray-900 text-white min-h-screen flex flex-col font-sans">
+            <main className="flex-grow p-4 overflow-y-auto pb-32">
+                <div className="flex justify-between items-center mb-4">
+                    <h1 className="text-2xl font-bold">My Library</h1>
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-full flex items-center"
+                    >
+                        <FolderIcon />
+                        <span className="ml-2">Add Songs</span>
+                    </button>
+                    <input
+                        type="file"
+                        multiple
+                        accept="audio/*"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        className="hidden"
+                    />
+                </div>
+
+                {isLoading ? (
+                    <div className="flex justify-center items-center h-64">
                         <SpinnerIcon />
-                        <p className="mt-4">{scanProgress.current} / {scanProgress.total} files processed</p>
                     </div>
-                </div>
-            )}
-
-            {/* Sidebar Overlay for Mobile */}
-            {isSidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-30 md:hidden" />}
-            
-            {/* Sidebar */}
-            <aside className={`w-64 bg-black text-gray-300 p-4 flex flex-col space-y-6 flex-shrink-0 fixed inset-y-0 left-0 z-40 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:relative md:translate-x-0`}>
-                <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-bold text-white">Music Player</h1>
-                    <button onClick={() => setSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><XIcon /></button>
-                </div>
-                <div>
-                    <h2 className="text-sm font-semibold tracking-wider uppercase mb-2">Library</h2>
-                    <nav className="space-y-1">
-                        <button onClick={() => handleViewChange({ type: 'library' })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'library' ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
-                            <MusicIcon /> <span>All Songs</span>
-                        </button>
-                         <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center space-x-3 p-2 rounded-md text-left hover:bg-gray-800">
-                           <FolderIcon /> <span>Add Music</span>
-                        </button>
-                        <input type="file" multiple webkitdirectory="" ref={fileInputRef} onChange={handleFolderSelect} className="hidden" />
-                    </nav>
-                </div>
-                <div className="flex-grow flex flex-col min-h-0">
-                     <div className="flex justify-between items-center mb-2">
-                         <h2 className="text-sm font-semibold tracking-wider uppercase">Playlists</h2>
-                         <button onClick={handleCreatePlaylist} className="p-1 hover:bg-gray-700 rounded-full"><PlusIcon /></button>
-                     </div>
-                    <nav className="space-y-1 overflow-y-auto">
-                        {playlists.map(p => (
-                            <button key={p.id} onClick={() => handleViewChange({ type: 'playlist', id: p.id })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'playlist' && activeView.id === p.id ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
-                                <PlaylistIcon /> <span className="truncate">{p.name}</span>
-                            </button>
-                        ))}
-                    </nav>
-                </div>
-            </aside>
-
-            {/* Main Content */}
-            <main className="flex-1 bg-gray-900 overflow-y-auto pb-28 md:pb-28">
-                 {/* Mobile Header */}
-                <header className="md:hidden sticky top-0 bg-gray-900/80 backdrop-blur-md z-10 p-4 flex items-center justify-between">
-                    <button onClick={() => setSidebarOpen(true)} className="text-gray-300 hover:text-white"><MenuIcon /></button>
-                    <h2 className="text-lg font-bold truncate">
-                         {activeView.type === 'library' ? 'All Songs' : playlists.find(p => p.id === activeView.id)?.name || 'Playlist'}
-                    </h2>
-                    <div className="w-6" /> {/* Spacer */}
-                </header>
-
-                <div className="p-2 md:p-6">
-                    <div className="relative mb-4">
-                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                            <SearchIcon />
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Search by title, artist, album..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-gray-800 rounded-full py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
-                    </div>
-                    
-                    {isLoading ? <div className="text-center p-10"><SpinnerIcon /></div> : (
-                        songs.length === 0 ? (
-                            <div className="text-center p-10 bg-gray-800 rounded-lg mt-4">
-                                <h2 className="text-2xl font-bold mb-2">Your library is empty</h2>
-                                <p className="text-gray-400 mb-4">Click "Add Music" in the sidebar to scan a folder.</p>
-                                <button onClick={() => fileInputRef.current?.click()} className="bg-green-500 text-white font-bold py-2 px-4 rounded-full hover:bg-green-600 transition-colors">
-                                    Select Music Folder
-                                </button>
-                            </div>
-                        ) : (
-                             <div className="text-white">
-                                 {/* Song List Header */}
-                                <div className="hidden md:grid grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 px-4 py-2 text-sm text-gray-400 border-b border-gray-700">
-                                    <div className="text-right">#</div>
-                                    <div>Title</div>
-                                    <div>Artist</div>
-                                    <div>Album</div>
-                                    <div className="text-center">Plays</div>
+                ) : (
+                    <ul className="space-y-2">
+                        {songs.map((song, index) => (
+                            <li
+                                key={song.id}
+                                onClick={() => playSong(index)}
+                                className={`p-3 rounded-lg flex justify-between items-center cursor-pointer ${currentSong?.id === song.id ? 'bg-gray-700' : 'hover:bg-gray-800'}`}
+                            >
+                                <div>
+                                    <div className="font-semibold">{song.title}</div>
+                                    <div className="text-sm text-gray-400">{song.artist}</div>
                                 </div>
-                                {/* Song List */}
-                                {filteredAndSortedSongs.map((song, index) => (
-                                    <div key={song.id} 
-                                        onDoubleClick={() => playSong(song, filteredAndSortedSongs)} 
-                                        className={`grid grid-cols-[auto_1fr_auto] md:grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 items-center md:px-4 md:h-16 rounded-md group hover:bg-gray-800/50 ${currentSong?.id === song.id ? 'bg-green-500/20' : ''}`}>
-                                        
-                                        <div className="text-center text-gray-400 w-8">
-                                           <button onClick={() => playSong(song, filteredAndSortedSongs)} className="w-8 h-8 flex items-center justify-center group-hover:hidden">{index+1}</button>
-                                           <button onClick={() => song.id === currentSong?.id && isPlaying ? handlePlayPause() : playSong(song, filteredAndSortedSongs)} className="w-8 h-8 items-center justify-center hidden group-hover:flex">
-                                               {song.id === currentSong?.id && isPlaying ? <PauseIcon /> : <PlayIcon />}
-                                           </button>
-                                        </div>
-                                        <div className="truncate cursor-pointer" onClick={() => playSong(song, filteredAndSortedSongs)}>
-                                            <p className={`${currentSong?.id === song.id ? 'text-green-400' : 'text-white'}`}>{song.title}</p>
-                                            <p className="text-sm text-gray-400 group-hover:text-gray-300 md:hidden">{song.artist}</p>
-                                            <p className="text-sm text-gray-400 group-hover:text-gray-300 hidden md:block">{formatDuration(song.duration)}</p>
-                                        </div>
-                                        
-                                        {/* Mobile More Button */}
-                                        <div className="md:hidden">
-                                            <button onClick={() => setAddToPlaylistModalOpen(song)} className="p-2 rounded-full hover:bg-gray-700">
-                                                <MoreIcon />
-                                            </button>
-                                        </div>
-
-                                        {/* Desktop Columns */}
-                                        <div className="hidden md:block truncate text-gray-400">{song.artist}</div>
-                                        <div className="hidden md:block truncate text-gray-400">{song.album}</div>
-                                        <div className="hidden md:flex text-center text-gray-400 relative items-center justify-center">
-                                            <span>{song.playCount}</span>
-                                            <button onClick={() => setAddToPlaylistModalOpen(song)} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full hover:bg-gray-700">
-                                                <MoreIcon />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                             </div>
-                        )
-                    )}
-                </div>
+                                <div className="text-sm text-gray-400">
+                                    {/* Duration can be displayed here once available */}
+                                </div>
+                            </li>
+                        ))}
+                        {songs.length === 0 && !isLoading && <p className="text-center text-gray-500 mt-8">No songs in library. Add some!</p>}
+                    </ul>
+                )}
             </main>
 
-            {/* Player Controls */}
-            <PlayerControls
-                currentSong={currentSong}
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                shuffleMode={shuffleMode}
-                repeatMode={repeatMode}
-                onPlayPause={handlePlayPause}
-                onNext={playNextSong}
-                onPrev={playPrevSong}
-                onSeek={handleSeek}
-                onToggleShuffle={toggleShuffle}
-                onToggleRepeat={toggleRepeat}
-            />
+            {/* Player Bar */}
+            <footer className="bg-gray-800 p-4 fixed bottom-0 w-full">
+                <div className="flex items-center">
+                    <div className="w-1/4">
+                        {currentSong && (
+                            <div>
+                                <div className="font-bold truncate">{currentSong.title}</div>
+                                <div className="text-sm text-gray-400 truncate">{currentSong.artist}</div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="w-2/4 flex flex-col items-center">
+                        <div className="flex items-center space-x-6">
+                            <button onClick={toggleShuffle}><ShuffleIcon isActive={shuffleMode !== 'none'} /></button>
+                            <button onClick={handlePrev} disabled={currentSongIndex === null}><PrevIcon /></button>
+                            <button onClick={handlePlayPause} className="w-12 h-12 bg-white text-gray-900 rounded-full flex items-center justify-center disabled:opacity-50" disabled={songs.length === 0}>
+                                {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                            </button>
+                            <button onClick={handleNext} disabled={currentSongIndex === null}><NextIcon /></button>
+                            <button onClick={toggleRepeat}><RepeatIcon mode={repeatMode} /></button>
+                        </div>
+                        <div className="w-full flex items-center space-x-2 mt-2">
+                            <span>{formatTime(currentTime)}</span>
+                            <input
+                                type="range"
+                                min="0"
+                                max={duration || 0}
+                                value={currentTime}
+                                onChange={handleSeek}
+                                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                                disabled={currentSongIndex === null}
+                            />
+                            <span>{formatTime(duration)}</span>
+                        </div>
+                    </div>
+                    <div className="w-1/4 flex items-center justify-end">
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={volume}
+                            onChange={handleVolumeChange}
+                            className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                    </div>
+                </div>
+            </footer>
+            <audio ref={audioRef} />
         </div>
     );
-}
+};
+
+export default App;

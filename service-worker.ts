@@ -1,8 +1,5 @@
 /// <reference lib="webworker" />
 
-// Fix: Add a type declaration for `self` to ensure TypeScript recognizes it as a `ServiceWorkerGlobalScope`.
-declare const self: ServiceWorkerGlobalScope;
-
 const CACHE_NAME = 'offline-music-player-v3'; // Bump version to force update and clear old cache
 const urlsToCache = [
   '/',
