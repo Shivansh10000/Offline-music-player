@@ -1,8 +1,15 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { Song, Playlist, SortOption, ShuffleMode, RepeatMode } from './types';
 import { getSongs, addSongs, getPlaylists, addPlaylist, updatePlaylist, deletePlaylist, incrementPlayCount } from './services/db';
-import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, MusicIcon, PlaylistIcon, FolderIcon, SearchIcon, PlusIcon, MoreIcon, XIcon, SpinnerIcon } from './components/Icons';
+import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, MusicIcon, PlaylistIcon, FolderIcon, SearchIcon, PlusIcon, MoreIcon, XIcon, SpinnerIcon, MenuIcon } from './components/Icons';
+
+// Fix: Add `webkitdirectory` to React's type definitions for input elements
+// to allow selecting directories. This is a non-standard property.
+declare module 'react' {
+    interface InputHTMLAttributes<T> {
+        webkitdirectory?: string;
+    }
+}
 
 const SUPPORTED_FORMATS = ['mp3', 'm4a', 'wav', 'flac', 'aac'];
 const PLAY_COUNT_THRESHOLD_S = 5;
@@ -33,22 +40,58 @@ interface PlayerControlsProps {
 }
 
 const PlayerControls: React.FC<PlayerControlsProps> = React.memo(({ onPlayPause, onNext, onPrev, onSeek, onToggleShuffle, onToggleRepeat, isPlaying, duration, currentTime, currentSong, shuffleMode, repeatMode }) => {
-    const seekBarRef = useRef<HTMLInputElement>(null);
+    const seekBarRefDesktop = useRef<HTMLInputElement>(null);
+    const seekBarRefMobile = useRef<HTMLInputElement>(null);
 
     const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
         onSeek(Number(e.target.value));
     };
 
     useEffect(() => {
-        if (seekBarRef.current) {
-            const progress = (currentTime / duration) * 100 || 0;
-            seekBarRef.current.style.background = `linear-gradient(to right, #1DB954 ${progress}%, #4b5563 ${progress}%)`;
-        }
+        const progress = (currentTime / duration) * 100 || 0;
+        const style = `linear-gradient(to right, #1DB954 ${progress}%, #4b5563 ${progress}%)`;
+        if(seekBarRefDesktop.current) seekBarRefDesktop.current.style.background = style;
+        if(seekBarRefMobile.current) seekBarRefMobile.current.style.background = style;
+
     }, [currentTime, duration]);
 
     return (
         <div className="fixed bottom-0 left-0 right-0 bg-gray-800/80 backdrop-blur-md text-white p-3 shadow-lg">
-            <div className="flex items-center space-x-4">
+             {/* --- Mobile View --- */}
+            <div className="md:hidden">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3 min-w-0">
+                        <div className="w-12 h-12 bg-gray-700 rounded-md flex-shrink-0">
+                            {currentSong && <img src={`https://picsum.photos/seed/${currentSong.id}/64`} alt="album art" className="w-full h-full object-cover rounded-md" />}
+                        </div>
+                        <div className="flex-grow min-w-0">
+                            <p className="font-bold truncate">{currentSong?.title || 'No song selected'}</p>
+                            <p className="text-sm text-gray-400 truncate">{currentSong?.artist || '...'}</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <button onClick={onPlayPause} className="w-12 h-12 flex items-center justify-center rounded-full text-white">
+                            {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                        </button>
+                        <button onClick={onNext}><NextIcon /></button>
+                    </div>
+                </div>
+                <div className="flex items-center w-full space-x-2 mt-2">
+                    <span className="text-xs">{formatDuration(currentTime)}</span>
+                    <input
+                        ref={seekBarRefMobile}
+                        type="range"
+                        min="0"
+                        max={duration || 100}
+                        value={currentTime}
+                        onChange={handleSeek}
+                        className="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer range-sm"
+                    />
+                    <span className="text-xs">{formatDuration(duration)}</span>
+                </div>
+            </div>
+            {/* --- Desktop View --- */}
+            <div className="hidden md:flex items-center space-x-4">
                 <div className="w-16 h-16 bg-gray-700 rounded-md flex-shrink-0">
                     {currentSong && <img src={`https://picsum.photos/seed/${currentSong.id}/64`} alt="album art" className="w-full h-full object-cover rounded-md" />}
                 </div>
@@ -69,7 +112,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = React.memo(({ onPlayPause,
                     <div className="flex items-center w-full space-x-2 mt-2">
                         <span className="text-xs">{formatDuration(currentTime)}</span>
                         <input
-                            ref={seekBarRef}
+                            ref={seekBarRefDesktop}
                             type="range"
                             min="0"
                             max={duration || 100}
@@ -104,11 +147,13 @@ export default function App() {
     const [shuffleMode, setShuffleMode] = useState<ShuffleMode>('none');
     const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
     
-    // Loading/Modal State
+    // UI State
     const [isLoading, setIsLoading] = useState(true);
     const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
     const [isScanning, setIsScanning] = useState(false);
     const [isAddToPlaylistModalOpen, setAddToPlaylistModalOpen] = useState<Song | null>(null);
+    const [isSidebarOpen, setSidebarOpen] = useState(false);
+
 
     // Refs
     const audioRef = useRef<HTMLAudioElement>(null);
@@ -394,6 +439,11 @@ export default function App() {
         }
         setAddToPlaylistModalOpen(null);
     };
+    
+    const handleViewChange = (view: { type: 'library' | 'playlist'; id?: number }) => {
+        setActiveView(view);
+        setSidebarOpen(false); // Close sidebar on selection
+    }
 
     const filteredAndSortedSongs = useMemo(() => {
         let items = songs;
@@ -460,19 +510,24 @@ export default function App() {
                 </div>
             )}
 
+            {/* Sidebar Overlay for Mobile */}
+            {isSidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-30 md:hidden" />}
+            
             {/* Sidebar */}
-            <aside className="w-64 bg-black text-gray-300 p-4 flex flex-col space-y-6 flex-shrink-0">
-                <h1 className="text-2xl font-bold text-white">Music Player</h1>
+            <aside className={`w-64 bg-black text-gray-300 p-4 flex flex-col space-y-6 flex-shrink-0 fixed inset-y-0 left-0 z-40 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:relative md:translate-x-0`}>
+                <div className="flex items-center justify-between">
+                    <h1 className="text-2xl font-bold text-white">Music Player</h1>
+                    <button onClick={() => setSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><XIcon /></button>
+                </div>
                 <div>
                     <h2 className="text-sm font-semibold tracking-wider uppercase mb-2">Library</h2>
                     <nav className="space-y-1">
-                        <button onClick={() => setActiveView({ type: 'library' })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'library' ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
+                        <button onClick={() => handleViewChange({ type: 'library' })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'library' ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
                             <MusicIcon /> <span>All Songs</span>
                         </button>
                          <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center space-x-3 p-2 rounded-md text-left hover:bg-gray-800">
                            <FolderIcon /> <span>Add Music</span>
                         </button>
-                        {/* Fix: remove non-standard 'directory' attribute to resolve TypeScript error. 'webkitdirectory' is retained for directory selection functionality. */}
                         <input type="file" multiple webkitdirectory="" ref={fileInputRef} onChange={handleFolderSelect} className="hidden" />
                     </nav>
                 </div>
@@ -483,7 +538,7 @@ export default function App() {
                      </div>
                     <nav className="space-y-1 overflow-y-auto">
                         {playlists.map(p => (
-                            <button key={p.id} onClick={() => setActiveView({ type: 'playlist', id: p.id })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'playlist' && activeView.id === p.id ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
+                            <button key={p.id} onClick={() => handleViewChange({ type: 'playlist', id: p.id })} className={`w-full flex items-center space-x-3 p-2 rounded-md text-left ${activeView.type === 'playlist' && activeView.id === p.id ? 'bg-gray-700 text-white' : 'hover:bg-gray-800'}`}>
                                 <PlaylistIcon /> <span className="truncate">{p.name}</span>
                             </button>
                         ))}
@@ -492,10 +547,21 @@ export default function App() {
             </aside>
 
             {/* Main Content */}
-            <main className="flex-1 bg-gray-900 overflow-y-auto pb-28">
-                <div className="p-6">
+            <main className="flex-1 bg-gray-900 overflow-y-auto pb-28 md:pb-28">
+                 {/* Mobile Header */}
+                <header className="md:hidden sticky top-0 bg-gray-900/80 backdrop-blur-md z-10 p-4 flex items-center justify-between">
+                    <button onClick={() => setSidebarOpen(true)} className="text-gray-300 hover:text-white"><MenuIcon /></button>
+                    <h2 className="text-lg font-bold truncate">
+                         {activeView.type === 'library' ? 'All Songs' : playlists.find(p => p.id === activeView.id)?.name || 'Playlist'}
+                    </h2>
+                    <div className="w-6" /> {/* Spacer */}
+                </header>
+
+                <div className="p-2 md:p-6">
                     <div className="relative mb-4">
-                        <SearchIcon />
+                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                            <SearchIcon />
+                        </div>
                         <input
                             type="text"
                             placeholder="Search by title, artist, album..."
@@ -507,7 +573,7 @@ export default function App() {
                     
                     {isLoading ? <div className="text-center p-10"><SpinnerIcon /></div> : (
                         songs.length === 0 ? (
-                            <div className="text-center p-10 bg-gray-800 rounded-lg">
+                            <div className="text-center p-10 bg-gray-800 rounded-lg mt-4">
                                 <h2 className="text-2xl font-bold mb-2">Your library is empty</h2>
                                 <p className="text-gray-400 mb-4">Click "Add Music" in the sidebar to scan a folder.</p>
                                 <button onClick={() => fileInputRef.current?.click()} className="bg-green-500 text-white font-bold py-2 px-4 rounded-full hover:bg-green-600 transition-colors">
@@ -517,7 +583,7 @@ export default function App() {
                         ) : (
                              <div className="text-white">
                                  {/* Song List Header */}
-                                <div className="grid grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 px-4 py-2 text-sm text-gray-400 border-b border-gray-700">
+                                <div className="hidden md:grid grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 px-4 py-2 text-sm text-gray-400 border-b border-gray-700">
                                     <div className="text-right">#</div>
                                     <div>Title</div>
                                     <div>Artist</div>
@@ -528,20 +594,31 @@ export default function App() {
                                 {filteredAndSortedSongs.map((song, index) => (
                                     <div key={song.id} 
                                         onDoubleClick={() => playSong(song, filteredAndSortedSongs)} 
-                                        className={`grid grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 items-center px-4 h-16 rounded-md group hover:bg-gray-800/50 ${currentSong?.id === song.id ? 'bg-green-500/20' : ''}`}>
-                                        <div className="text-right text-gray-400">
+                                        className={`grid grid-cols-[auto_1fr_auto] md:grid-cols-[3rem_1fr_1fr_1fr_5rem] gap-4 items-center md:px-4 md:h-16 rounded-md group hover:bg-gray-800/50 ${currentSong?.id === song.id ? 'bg-green-500/20' : ''}`}>
+                                        
+                                        <div className="text-center text-gray-400 w-8">
                                            <button onClick={() => playSong(song, filteredAndSortedSongs)} className="w-8 h-8 flex items-center justify-center group-hover:hidden">{index+1}</button>
                                            <button onClick={() => song.id === currentSong?.id && isPlaying ? handlePlayPause() : playSong(song, filteredAndSortedSongs)} className="w-8 h-8 items-center justify-center hidden group-hover:flex">
                                                {song.id === currentSong?.id && isPlaying ? <PauseIcon /> : <PlayIcon />}
                                            </button>
                                         </div>
-                                        <div className="truncate">
+                                        <div className="truncate cursor-pointer" onClick={() => playSong(song, filteredAndSortedSongs)}>
                                             <p className={`${currentSong?.id === song.id ? 'text-green-400' : 'text-white'}`}>{song.title}</p>
-                                            <p className="text-sm text-gray-400 group-hover:text-gray-300">{formatDuration(song.duration)}</p>
+                                            <p className="text-sm text-gray-400 group-hover:text-gray-300 md:hidden">{song.artist}</p>
+                                            <p className="text-sm text-gray-400 group-hover:text-gray-300 hidden md:block">{formatDuration(song.duration)}</p>
                                         </div>
-                                        <div className="truncate text-gray-400">{song.artist}</div>
-                                        <div className="truncate text-gray-400">{song.album}</div>
-                                        <div className="text-center text-gray-400 relative">
+                                        
+                                        {/* Mobile More Button */}
+                                        <div className="md:hidden">
+                                            <button onClick={() => setAddToPlaylistModalOpen(song)} className="p-2 rounded-full hover:bg-gray-700">
+                                                <MoreIcon />
+                                            </button>
+                                        </div>
+
+                                        {/* Desktop Columns */}
+                                        <div className="hidden md:block truncate text-gray-400">{song.artist}</div>
+                                        <div className="hidden md:block truncate text-gray-400">{song.album}</div>
+                                        <div className="hidden md:flex text-center text-gray-400 relative items-center justify-center">
                                             <span>{song.playCount}</span>
                                             <button onClick={() => setAddToPlaylistModalOpen(song)} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full hover:bg-gray-700">
                                                 <MoreIcon />
