@@ -1,0 +1,5 @@
+{
+  "name": "Offline Music Player",
+  "description": "A mobile-first, offline music player that reads and plays music files directly from your device's storage. It features library management, search, playlists, and playback controls, all without any network activity to ensure privacy and functionality anywhere.",
+  "requestFramePermissions": []
+}
